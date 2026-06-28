@@ -4,3 +4,7 @@ main: me.zimzaza4.geyserutils.spigot.GeyserUtils
 authors:
   - zimzaza4
   - willem.dev
+commands:
+  bparticle:
+    description: Send a Bedrock particle (geyserutils:main) - tests geyserutilsbridge client mod
+    usage: /bparticle <identifier> [molangJson]

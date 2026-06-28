@@ -53,6 +53,34 @@ public final class GeyserUtils extends JavaPlugin {
                 }
             }
         });
+
+        // Test command: send a Bedrock particle (geyserutils:main) to test the geyserutilsbridge client mod
+        org.bukkit.command.PluginCommand bparticle = getCommand("bparticle");
+        if (bparticle != null) {
+            bparticle.setExecutor((sender, command, label, args) -> {
+                if (!(sender instanceof org.bukkit.entity.Player)) {
+                    sender.sendMessage("Only players can run this command.");
+                    return true;
+                }
+                org.bukkit.entity.Player player = (org.bukkit.entity.Player) sender;
+                if (args.length < 1) {
+                    player.sendMessage("Usage: /bparticle <identifier> [molangJson]");
+                    return true;
+                }
+                String identifier = args[0];
+                String molang = args.length > 1 ? String.join(" ", java.util.Arrays.copyOfRange(args, 1, args.length)) : null;
+                try {
+                    // CustomParticle(position, identifier, molangVariablesJson) — position 由 sendCustomParticle 的 location 决定，传 null
+                    me.zimzaza4.geyserutils.common.particle.CustomParticle particle =
+                            new me.zimzaza4.geyserutils.common.particle.CustomParticle(null, identifier, molang);
+                    me.zimzaza4.geyserutils.spigot.api.PlayerUtils.sendCustomParticle(player, player.getLocation(), particle);
+                    player.sendMessage("Sent Bedrock particle: " + identifier + " (geyserutils:main -> geyserutilsbridge client mod)");
+                } catch (Throwable t) {
+                    player.sendMessage("Failed to send particle: " + t.getMessage());
+                }
+                return true;
+            });
+        }
     }
 
     @Override
