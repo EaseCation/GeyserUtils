@@ -51,7 +51,6 @@ import org.geysermc.geyser.entity.type.Entity;
 import org.geysermc.geyser.entity.type.player.PlayerEntity;
 import org.geysermc.geyser.registry.Registries;
 import org.geysermc.geyser.session.GeyserSession;
-import org.geysermc.geyser.util.DimensionUtils;
 import org.geysermc.mcprotocollib.network.Session;
 import org.geysermc.mcprotocollib.network.event.session.PacketSendingEvent;
 import org.geysermc.mcprotocollib.network.event.session.SessionAdapter;
@@ -560,7 +559,12 @@ public class GeyserUtils implements Extension {
 
         } else if (customPacket instanceof CustomParticleEffectPayloadPacket customParticleEffectPacket) {
             SpawnParticleEffectPacket spawnParticleEffectPacket = new SpawnParticleEffectPacket();
-            spawnParticleEffectPacket.setDimensionId(DimensionUtils.javaToBedrock(session));
+            // 用客户端真实当前 bedrock 维度：hub↔空岛互传时 Geyser fork 用占位 dim3 强制客户端重载，而 setBedrockDimension
+            // 会把 3 折叠回 overworld 0，于是 getBedrockDimension().bedrockId() 返回 0、与客户端真实维度 3 不符；lastNormalDimId
+            // 记录的才是真正发给客户端的值（0 或 3）。否则非主维度的 SpawnParticleEffect 会被客户端按 dimensionId 过滤丢弃。
+            // 逻辑内联于此（而非 Geyser 本体的 DimensionUtils），让主 fork 保持干净、这层 EaseCation 特有的维度修复随扩展演进。
+            int dimensionId = session.getLastNormalDimId() == 3 ? 3 : session.getBedrockDimension().bedrockId();
+            spawnParticleEffectPacket.setDimensionId(dimensionId);
             spawnParticleEffectPacket.setPosition(Converter.serializePos(customParticleEffectPacket.getPos()));
             spawnParticleEffectPacket.setIdentifier(customParticleEffectPacket.getParticle().identifier());
             spawnParticleEffectPacket.setMolangVariablesJson(Optional.ofNullable(customParticleEffectPacket.getParticle().molangVariablesJson()));
