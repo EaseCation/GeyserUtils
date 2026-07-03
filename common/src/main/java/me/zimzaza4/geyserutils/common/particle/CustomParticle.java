@@ -18,4 +18,18 @@ public class CustomParticle {
     private String identifier;
     @Nullable
     private String molangVariablesJson;
+    /**
+     * Optional Java-side entity id to bind this particle's emitter to (follows the entity as it moves).
+     * -1 (default) = unbound world-space emitter. Downstream (Geyser extension / JE bridge) maps this
+     * Java entity id to the per-session bedrock geyserId / uses it directly on the client world.
+     */
+    private int entityId = -1;
+
+    /** Backward-compatible 3-arg constructor: world-space (unbound) particle. */
+    public CustomParticle(Pos position, String identifier, @Nullable String molangVariablesJson) {
+        this.position = position;
+        this.identifier = identifier;
+        this.molangVariablesJson = molangVariablesJson;
+        this.entityId = -1;
+    }
 }

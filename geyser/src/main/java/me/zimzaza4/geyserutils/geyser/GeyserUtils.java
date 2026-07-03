@@ -565,7 +565,19 @@ public class GeyserUtils implements Extension {
             // 逻辑内联于此（而非 Geyser 本体的 DimensionUtils），让主 fork 保持干净、这层 EaseCation 特有的维度修复随扩展演进。
             int dimensionId = session.getLastNormalDimId() == 3 ? 3 : session.getBedrockDimension().bedrockId();
             spawnParticleEffectPacket.setDimensionId(dimensionId);
-            spawnParticleEffectPacket.setPosition(Converter.serializePos(customParticleEffectPacket.getPos()));
+            // 实体绑定：payload 带 Java 侧 entity id 时，在本 session 映射成该 session 的 bedrock geyserId 并
+            // setUniqueEntityId，emitter 即随该实体移动（配合 particle.json 的 minecraft:emitter_local_space）；
+            // 此时 position 是相对实体的偏移，置 ZERO（对齐 Geyser 本体 JavaAnimateTranslator 的绑定用法）。
+            // entityId=-1 或该实体不在本观察者跟踪范围（getEntityByJavaId 返回 null）→ 回退世界坐标 unbound。
+            int javaEntityId = customParticleEffectPacket.getParticle().entityId();
+            org.geysermc.geyser.entity.type.Entity boundEntity = javaEntityId >= 0
+                    ? session.getEntityCache().getEntityByJavaId(javaEntityId) : null;
+            if (boundEntity != null) {
+                spawnParticleEffectPacket.setUniqueEntityId(boundEntity.getGeyserId());
+                spawnParticleEffectPacket.setPosition(org.cloudburstmc.math.vector.Vector3f.ZERO);
+            } else {
+                spawnParticleEffectPacket.setPosition(Converter.serializePos(customParticleEffectPacket.getPos()));
+            }
             spawnParticleEffectPacket.setIdentifier(customParticleEffectPacket.getParticle().identifier());
             spawnParticleEffectPacket.setMolangVariablesJson(Optional.ofNullable(customParticleEffectPacket.getParticle().molangVariablesJson()));
             session.sendUpstreamPacket(spawnParticleEffectPacket);
