@@ -575,7 +575,17 @@ public class GeyserUtils implements Extension {
             if (boundEntity != null) {
                 spawnParticleEffectPacket.setUniqueEntityId(boundEntity.getGeyserId());
                 spawnParticleEffectPacket.setPosition(org.cloudburstmc.math.vector.Vector3f.ZERO);
+                // B1 诊断：确认 java id→geyserId 映射命中（运行时验证 BE 端是否随实体跟随时看这条）。
+                GeyserImpl.getInstance().getLogger().debug("[GeyserUtils] particle '"
+                        + customParticleEffectPacket.getParticle().identifier() + "' bound javaId=" + javaEntityId
+                        + " -> geyserId=" + boundEntity.getGeyserId());
             } else {
+                // B1 诊断：请求了绑定但本 session 找不到该实体 → 静默回退世界坐标；跟随失效多半查这条。
+                if (javaEntityId >= 0) {
+                    GeyserImpl.getInstance().getLogger().debug("[GeyserUtils] particle '"
+                            + customParticleEffectPacket.getParticle().identifier() + "' bind requested javaId="
+                            + javaEntityId + " but no entity in this session's cache -> fallback world-space");
+                }
                 spawnParticleEffectPacket.setPosition(Converter.serializePos(customParticleEffectPacket.getPos()));
             }
             spawnParticleEffectPacket.setIdentifier(customParticleEffectPacket.getParticle().identifier());
