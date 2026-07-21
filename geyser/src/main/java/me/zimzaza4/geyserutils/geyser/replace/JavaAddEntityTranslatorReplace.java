@@ -44,6 +44,8 @@ import org.geysermc.mcprotocollib.protocol.data.game.entity.object.WardenData;
 import org.geysermc.mcprotocollib.protocol.data.game.entity.type.EntityType;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundAddEntityPacket;
 
+import me.zimzaza4.geyserutils.geyser.PendingBoundParticles;
+
 import static me.zimzaza4.geyserutils.geyser.GeyserUtils.CUSTOM_ENTITIES;
 import static me.zimzaza4.geyserutils.geyser.GeyserUtils.LOADED_ENTITY_DEFINITIONS;
 
@@ -148,5 +150,10 @@ public class JavaAddEntityTranslatorReplace extends PacketTranslator<Clientbound
         }
 
         session.getEntityCache().spawnEntity(entity);
+
+        // defer-and-flush：实体（含 GeyserModelEngine 用 PacketEvents 伪造 spawn 包、以 3亿~4亿合成 id 生成的载体 PIG）
+        // 刚入 session 缓存，正是冲刷早前 park 的绑定粒子的精确时机——此刻 getEntityByJavaId(entityId) 起即可命中。
+        // 对无暂存的普通实体 spawn 是廉价 no-op。见 me.zimzaza4.geyserutils.geyser.PendingBoundParticles。
+        PendingBoundParticles.flush(session, entity.getEntityId(), entity.getGeyserId());
     }
 }

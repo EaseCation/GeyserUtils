@@ -434,6 +434,9 @@ public class GeyserUtils implements Extension {
     @Subscribe
     public void onSessionQuit(SessionDisconnectEvent event) {
         CUSTOM_ENTITIES.remove(event.connection());
+        if (event.connection() instanceof GeyserSession session) {
+            PendingBoundParticles.clear(session);
+        }
     }
 
     public void registerPacketListener(GeyserSession session) {
@@ -565,32 +568,32 @@ public class GeyserUtils implements Extension {
             // 逻辑内联于此（而非 Geyser 本体的 DimensionUtils），让主 fork 保持干净、这层 EaseCation 特有的维度修复随扩展演进。
             int dimensionId = session.getLastNormalDimId() == 3 ? 3 : session.getBedrockDimension().bedrockId();
             spawnParticleEffectPacket.setDimensionId(dimensionId);
-            // 实体绑定：payload 带 Java 侧 entity id 时，在本 session 映射成该 session 的 bedrock geyserId 并
-            // setUniqueEntityId，emitter 即随该实体移动（配合 particle.json 的 minecraft:emitter_local_space）；
-            // 此时 position 是相对实体的偏移，置 ZERO（对齐 Geyser 本体 JavaAnimateTranslator 的绑定用法）。
-            // entityId=-1 或该实体不在本观察者跟踪范围（getEntityByJavaId 返回 null）→ 回退世界坐标 unbound。
-            int javaEntityId = customParticleEffectPacket.getParticle().entityId();
-            org.geysermc.geyser.entity.type.Entity boundEntity = javaEntityId >= 0
-                    ? session.getEntityCache().getEntityByJavaId(javaEntityId) : null;
-            if (boundEntity != null) {
-                spawnParticleEffectPacket.setUniqueEntityId(boundEntity.getGeyserId());
-                spawnParticleEffectPacket.setPosition(org.cloudburstmc.math.vector.Vector3f.ZERO);
-                // B1 诊断：确认 java id→geyserId 映射命中（运行时验证 BE 端是否随实体跟随时看这条）。
-                GeyserImpl.getInstance().getLogger().debug("[GeyserUtils] particle '"
-                        + customParticleEffectPacket.getParticle().identifier() + "' bound javaId=" + javaEntityId
-                        + " -> geyserId=" + boundEntity.getGeyserId());
-            } else {
-                // B1 诊断：请求了绑定但本 session 找不到该实体 → 静默回退世界坐标；跟随失效多半查这条。
-                if (javaEntityId >= 0) {
-                    GeyserImpl.getInstance().getLogger().debug("[GeyserUtils] particle '"
-                            + customParticleEffectPacket.getParticle().identifier() + "' bind requested javaId="
-                            + javaEntityId + " but no entity in this session's cache -> fallback world-space");
-                }
-                spawnParticleEffectPacket.setPosition(Converter.serializePos(customParticleEffectPacket.getPos()));
-            }
-            spawnParticleEffectPacket.setIdentifier(customParticleEffectPacket.getParticle().identifier());
+            String particleId = customParticleEffectPacket.getParticle().identifier();
+            spawnParticleEffectPacket.setIdentifier(particleId);
             spawnParticleEffectPacket.setMolangVariablesJson(Optional.ofNullable(customParticleEffectPacket.getParticle().molangVariablesJson()));
-            session.sendUpstreamPacket(spawnParticleEffectPacket);
+
+            // 实体绑定的架构级根治（defer-and-flush，见 PendingBoundParticles）：模型怪的 BE 载体 PIG 由
+            // GeyserModelEngine 异步生成，其 spawn 常晚于本粒子包 → 此刻 getEntityByJavaId 可能 miss。旧逻辑就地
+            // 降级世界坐标 = 在出生点留下永不跟随的「固定圆孤儿」。改为：
+            //   entityId<0：真·世界坐标粒子（未请求绑定），立即按世界坐标发送。
+            //   已在缓存：立即绑定发送（emitter 随实体移动，配合 emitter_local_space；墓碑去重 tick+2 rebind）。
+            //   不在缓存：park 暂存，等载体 spawnEntity 时 flush 冲刷；绝不回退世界坐标（fail-closed 而非产孤儿）。
+            int javaEntityId = customParticleEffectPacket.getParticle().entityId();
+            if (javaEntityId < 0) {
+                spawnParticleEffectPacket.setPosition(Converter.serializePos(customParticleEffectPacket.getPos()));
+                session.sendUpstreamPacket(spawnParticleEffectPacket);
+            } else {
+                org.geysermc.geyser.entity.type.Entity boundEntity = session.getEntityCache().getEntityByJavaId(javaEntityId);
+                if (boundEntity != null) {
+                    boolean sent = PendingBoundParticles.sendBoundOnce(session, javaEntityId, particleId,
+                            spawnParticleEffectPacket, boundEntity.getGeyserId());
+                    GeyserImpl.getInstance().getLogger().debug("[GeyserUtils] particle '" + particleId
+                            + "' bound javaId=" + javaEntityId + " -> geyserId=" + boundEntity.getGeyserId()
+                            + (sent ? "" : " (suppressed: already sent this window)"));
+                } else {
+                    PendingBoundParticles.park(session, javaEntityId, particleId, spawnParticleEffectPacket);
+                }
+            }
         } else if (customPacket instanceof CustomSkinPayloadPacket customSkinPayloadPacket) {
             if (session.getEntityCache().getEntityByJavaId(customSkinPayloadPacket.getEntityId()) instanceof PlayerEntity player) {
                 SkinData data = LOADED_SKIN_DATA.get(customSkinPayloadPacket.getSkinId());
