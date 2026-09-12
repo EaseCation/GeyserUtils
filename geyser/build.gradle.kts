@@ -20,6 +20,10 @@ dependencies {
     annotationProcessor("org.projectlombok:lombok:1.18.32")
 
     implementation(project(":common"))
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testImplementation("org.geysermc.geyser:core:2.9.2-SNAPSHOT")
+    testImplementation("org.mockito:mockito-core:5.15.2")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.4")
 }
 
 java {
@@ -35,3 +39,4 @@ tasks.shadowJar {
 }
 
 tasks.build { dependsOn(tasks.shadowJar) }
+tasks.test { useJUnitPlatform() }

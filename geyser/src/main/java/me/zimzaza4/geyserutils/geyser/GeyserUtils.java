@@ -455,7 +455,10 @@ public class GeyserUtils implements Extension {
                     if (packet instanceof ServerboundCustomPayloadPacket payloadPacket) {
                         if (ReflectionUtils.getChannel(payloadPacket).toString().equals("minecraft:register")) {
                             String channels = new String(payloadPacket.getData(), StandardCharsets.UTF_8);
-                            channels = channels + "\0" + GeyserUtilsChannels.MAIN;
+                            java.util.Set<String> registered = new java.util.LinkedHashSet<>(java.util.Arrays.asList(channels.split("\0")));
+                            registered.add(GeyserUtilsChannels.MAIN);
+                            registered.add(GeyserUtilsChannels.ENTITY_IDS_CAPABILITY);
+                            channels = String.join("\0", registered);
                             event.setPacket(ReflectionUtils.buildServerboundPayloadPacket("minecraft:register", channels.getBytes(StandardCharsets.UTF_8)));
                         }
                     }
@@ -463,6 +466,9 @@ public class GeyserUtils implements Extension {
 
                 @Override
                 public void packetReceived(Session tcpSession, Packet packet) {
+                    if (packet instanceof org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundLoginPacket) {
+                        announceEntityQueries(session);
+                    }
                     if (packet instanceof ClientboundCustomPayloadPacket payloadPacket) {
                         if (ReflectionUtils.getChannel(payloadPacket).toString().equals(GeyserUtilsChannels.MAIN)) {
                             CustomPayloadPacket customPacket = packetManager.decodePacket(payloadPacket.getData());
@@ -471,10 +477,24 @@ public class GeyserUtils implements Extension {
                     }
                 }
             });
+            // 极快的本地连接可能在监听器安装前已完成登录，补发一次幂等声明。
+            if (session.isSpawned()) announceEntityQueries(session);
         }, 80, TimeUnit.MILLISECONDS);
     }
 
+    private void announceEntityQueries(GeyserSession session) {
+        session.ensureInEventLoop(() -> session.sendDownstreamPacket(ReflectionUtils.buildServerboundPayloadPacket(
+                "minecraft:register", (GeyserUtilsChannels.MAIN + "\0" + GeyserUtilsChannels.ENTITY_IDS_CAPABILITY)
+                        .getBytes(StandardCharsets.UTF_8))));
+    }
+
     private void handleCustomPacket(GeyserSession session, CustomPayloadPacket customPacket) {
+        if (customPacket instanceof EntityIdsRequestPacket request) {
+            EntityIdsQueryHandler.handle(session, request, response ->
+                    session.sendDownstreamPacket(ReflectionUtils.buildServerboundPayloadPacket(
+                            GeyserUtilsChannels.MAIN, packetManager.encodePacket(response))));
+            return;
+        }
         if (customPacket instanceof BundlePacket bundlePacket) {
             bundlePacket.getPackets().forEach(p -> handleCustomPacket(session, p));
         } else if (customPacket instanceof CameraShakeCustomPayloadPacket cameraShakePacket) {
@@ -653,4 +673,3 @@ public class GeyserUtils implements Extension {
     }
 
 }
-
