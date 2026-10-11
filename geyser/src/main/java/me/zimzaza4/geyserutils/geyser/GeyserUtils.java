@@ -16,7 +16,6 @@ import me.zimzaza4.geyserutils.common.packet.*;
 import me.zimzaza4.geyserutils.geyser.form.NpcDialogueForm;
 import me.zimzaza4.geyserutils.geyser.form.NpcDialogueForms;
 import me.zimzaza4.geyserutils.geyser.form.element.Button;
-import me.zimzaza4.geyserutils.geyser.replace.JavaAddEntityTranslatorReplace;
 import me.zimzaza4.geyserutils.geyser.translator.NPCFormResponseTranslator;
 import me.zimzaza4.geyserutils.geyser.util.Converter;
 import me.zimzaza4.geyserutils.geyser.util.DeltaUtils;
@@ -43,6 +42,8 @@ import org.geysermc.geyser.api.skin.SkinData;
 import org.geysermc.geyser.api.skin.SkinGeometry;
 import org.geysermc.geyser.api.util.Identifier;
 import org.geysermc.geyser.entity.EntityDefinition;
+import org.geysermc.geyser.event.type.JavaEntitySpawnEvent;
+import org.geysermc.geyser.event.type.EntitySpawnedEvent;
 import org.geysermc.geyser.entity.properties.GeyserEntityProperties;
 import org.geysermc.geyser.entity.properties.type.BooleanProperty;
 import org.geysermc.geyser.entity.properties.type.FloatProperty;
@@ -57,7 +58,6 @@ import org.geysermc.mcprotocollib.network.event.session.SessionAdapter;
 import org.geysermc.mcprotocollib.network.packet.Packet;
 import org.geysermc.mcprotocollib.protocol.packet.common.clientbound.ClientboundCustomPayloadPacket;
 import org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundCustomPayloadPacket;
-import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundAddEntityPacket;
 import org.jetbrains.annotations.NotNull;
 
 import javax.imageio.ImageIO;
@@ -85,7 +85,7 @@ public class GeyserUtils implements Extension {
     @Getter
     public static Map<String, SkinData> LOADED_SKIN_DATA = new HashMap<>();
     @Getter
-    public static Map<String, EntityDefinition> LOADED_ENTITY_DEFINITIONS = new HashMap<>();
+    public static Map<String, EntityDefinition<?>> LOADED_ENTITY_DEFINITIONS = new HashMap<>();
     @Getter
     public static Map<GeyserConnection, Cache<Integer, String>> CUSTOM_ENTITIES = new ConcurrentHashMap<>();
     static Cape EMPTY_CAPE = new Cape("", "no-cape", new byte[0], true);
@@ -195,10 +195,10 @@ public class GeyserUtils implements Extension {
 
         // Fork's EntityDefinition.Builder has no height/width/identifier/propertiesBuilder setters;
         // build the record directly (null factory is fine: custom entities are constructed explicitly
-        // in JavaAddEntityTranslatorReplace, never via this factory).
+        // in CustomEntitySpawnHandler, never via this factory).
         GeyserEntityProperties.Builder propsBuilder = getProperties(id);
         EntityDefinition<Entity> def = new EntityDefinition<>(null, null, id, 0.1f, 0.1f, 0f,
-                propsBuilder == null ? null : propsBuilder.build(), List.of());
+                propsBuilder == null ? new GeyserEntityProperties() : propsBuilder.build(), List.of());
 
         LOADED_ENTITY_DEFINITIONS.put(id, def);
     }
@@ -334,15 +334,11 @@ public class GeyserUtils implements Extension {
 
     @Subscribe
     public void onEnable(GeyserPostInitializeEvent event) {
-        // Adapted for the EaseCation netease/ec Geyser fork (pre entity-API-refactor):
-        // the upstream EntitySpawnContext probe is removed; JavaAddEntityTranslatorReplace
-        // targets the fork's pre-refactor entity constructors directly.
         Registries.BEDROCK_PACKET_TRANSLATORS.register(NpcRequestPacket.class, new NPCFormResponseTranslator());
         loadSkins();
         ReflectionUtils.init();
         CameraPreset.load();
 
-        replaceTranslator();
         GEYSER_LOADED = true;
         logger().info("Defined " + LOADED_ENTITY_DEFINITIONS.size() + " entities");
         // MountFix.start();
@@ -364,9 +360,14 @@ public class GeyserUtils implements Extension {
         scheduler.schedule(() -> Registries.BEDROCK_ENTITY_PROPERTIES.get().addAll(entityProperties), 1, TimeUnit.SECONDS);
     }
 
-    public void replaceTranslator() {
-        Registries.JAVA_PACKET_TRANSLATORS
-                .register(ClientboundAddEntityPacket.class, new JavaAddEntityTranslatorReplace());
+    @Subscribe
+    public void onJavaEntitySpawn(JavaEntitySpawnEvent event) {
+        CustomEntitySpawnHandler.apply(event, CUSTOM_ENTITIES.get(event.session()), LOADED_ENTITY_DEFINITIONS);
+    }
+
+    @Subscribe
+    public void onEntitySpawned(EntitySpawnedEvent event) {
+        PendingBoundParticles.flush(event.session(), event.entity().getEntityId(), event.entity().getGeyserId());
     }
 
     @Subscribe
@@ -561,14 +562,12 @@ public class GeyserUtils implements Extension {
             }
             session.sendUpstreamPacket(animateEntityPacket);
         } else if (customPacket instanceof CustomEntityPacket customEntityPacket) {
-            if (!LOADED_ENTITY_DEFINITIONS.containsKey(customEntityPacket.getIdentifier())) {
-                // System.out.println("Not a vaild entity:" + customEntityPacket.getEntityId());
-                return;
-            }
-            // System.out.println("custom entity:" + customEntityPacket.getEntityId());
-
-            Cache<Integer, String> cache = CUSTOM_ENTITIES.get(session);
-            cache.put(customEntityPacket.getEntityId(), customEntityPacket.getIdentifier());
+            session.ensureInEventLoop(() -> {
+                Cache<Integer, String> cache = CUSTOM_ENTITIES.get(session);
+                if (cache != null && LOADED_ENTITY_DEFINITIONS.containsKey(customEntityPacket.getIdentifier())) {
+                    cache.put(customEntityPacket.getEntityId(), customEntityPacket.getIdentifier());
+                }
+            });
         } else if (customPacket instanceof CameraInstructionCustomPayloadPacket cameraInstructionPacket) {
             if (cameraInstructionPacket.getInstruction() instanceof SetInstruction instruction) {
                 session.camera().sendCameraPosition(Converter.serializeSetInstruction(instruction));
@@ -581,39 +580,21 @@ public class GeyserUtils implements Extension {
             }
 
         } else if (customPacket instanceof CustomParticleEffectPayloadPacket customParticleEffectPacket) {
-            SpawnParticleEffectPacket spawnParticleEffectPacket = new SpawnParticleEffectPacket();
-            // 用客户端真实当前 bedrock 维度：hub↔空岛互传时 Geyser fork 用占位 dim3 强制客户端重载，而 setBedrockDimension
-            // 会把 3 折叠回 overworld 0，于是 getBedrockDimension().bedrockId() 返回 0、与客户端真实维度 3 不符；lastNormalDimId
-            // 记录的才是真正发给客户端的值（0 或 3）。否则非主维度的 SpawnParticleEffect 会被客户端按 dimensionId 过滤丢弃。
-            // 逻辑内联于此（而非 Geyser 本体的 DimensionUtils），让主 fork 保持干净、这层 EaseCation 特有的维度修复随扩展演进。
-            int dimensionId = session.getLastNormalDimId() == 3 ? 3 : session.getBedrockDimension().bedrockId();
-            spawnParticleEffectPacket.setDimensionId(dimensionId);
-            String particleId = customParticleEffectPacket.getParticle().identifier();
-            spawnParticleEffectPacket.setIdentifier(particleId);
-            spawnParticleEffectPacket.setMolangVariablesJson(Optional.ofNullable(customParticleEffectPacket.getParticle().molangVariablesJson()));
-
-            // 实体绑定的架构级根治（defer-and-flush，见 PendingBoundParticles）：模型怪的 BE 载体 PIG 由
-            // GeyserModelEngine 异步生成，其 spawn 常晚于本粒子包 → 此刻 getEntityByJavaId 可能 miss。旧逻辑就地
-            // 降级世界坐标 = 在出生点留下永不跟随的「固定圆孤儿」。改为：
-            //   entityId<0：真·世界坐标粒子（未请求绑定），立即按世界坐标发送。
-            //   已在缓存：立即绑定发送（emitter 随实体移动，配合 emitter_local_space；墓碑去重 tick+2 rebind）。
-            //   不在缓存：park 暂存，等载体 spawnEntity 时 flush 冲刷；绝不回退世界坐标（fail-closed 而非产孤儿）。
-            int javaEntityId = customParticleEffectPacket.getParticle().entityId();
-            if (javaEntityId < 0) {
-                spawnParticleEffectPacket.setPosition(Converter.serializePos(customParticleEffectPacket.getPos()));
-                session.sendUpstreamPacket(spawnParticleEffectPacket);
-            } else {
-                org.geysermc.geyser.entity.type.Entity boundEntity = session.getEntityCache().getEntityByJavaId(javaEntityId);
-                if (boundEntity != null) {
-                    boolean sent = PendingBoundParticles.sendBoundOnce(session, javaEntityId, particleId,
-                            spawnParticleEffectPacket, boundEntity.getGeyserId());
-                    GeyserImpl.getInstance().getLogger().debug("[GeyserUtils] particle '" + particleId
-                            + "' bound javaId=" + javaEntityId + " -> geyserId=" + boundEntity.getGeyserId()
-                            + (sent ? "" : " (suppressed: already sent this window)"));
+            session.ensureInEventLoop(() -> {
+                if (session.isClosed()) return;
+                SpawnParticleEffectPacket packet = new SpawnParticleEffectPacket();
+                int dimensionId = session.getLastNormalDimId() == 3 ? 3 : session.getBedrockDimension().bedrockId();
+                packet.setDimensionId(dimensionId);
+                packet.setIdentifier(customParticleEffectPacket.getParticle().identifier());
+                packet.setMolangVariablesJson(Optional.ofNullable(customParticleEffectPacket.getParticle().molangVariablesJson()));
+                int javaEntityId = customParticleEffectPacket.getParticle().entityId();
+                if (javaEntityId < 0) {
+                    packet.setPosition(Converter.serializePos(customParticleEffectPacket.getPos()));
+                    session.sendUpstreamPacket(packet);
                 } else {
-                    PendingBoundParticles.park(session, javaEntityId, particleId, spawnParticleEffectPacket);
+                    PendingBoundParticles.send(session, javaEntityId, packet);
                 }
-            }
+            });
         } else if (customPacket instanceof CustomSkinPayloadPacket customSkinPayloadPacket) {
             if (session.getEntityCache().getEntityByJavaId(customSkinPayloadPacket.getEntityId()) instanceof PlayerEntity player) {
                 SkinData data = LOADED_SKIN_DATA.get(customSkinPayloadPacket.getSkinId());
@@ -657,8 +638,8 @@ public class GeyserUtils implements Extension {
 
             Entity entity = (session.getEntityCache().getEntityByJavaId(entityPropertyRegisterPacket.getEntityId()));
             if (entity != null) {
-                String def = CUSTOM_ENTITIES.get(session).getIfPresent(entity.getEntityId());
-                if (def == null) return;
+                String def = entity.getDefinition().identifier();
+                if (!LOADED_ENTITY_DEFINITIONS.containsKey(def)) return;
 
                 if (!containsProperty(def, entityPropertyRegisterPacket.getIdentifier())) {
                     addProperty(def, entityPropertyRegisterPacket.getIdentifier(), entityPropertyRegisterPacket.getType());
