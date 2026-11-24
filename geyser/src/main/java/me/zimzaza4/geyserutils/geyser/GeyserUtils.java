@@ -459,6 +459,7 @@ public class GeyserUtils implements Extension {
                             java.util.Set<String> registered = new java.util.LinkedHashSet<>(java.util.Arrays.asList(channels.split("\0")));
                             registered.add(GeyserUtilsChannels.MAIN);
                             registered.add(GeyserUtilsChannels.ENTITY_IDS_CAPABILITY);
+                            registered.add(GeyserUtilsChannels.SERVER_BREAK_CAPABILITY);
                             channels = String.join("\0", registered);
                             event.setPacket(ReflectionUtils.buildServerboundPayloadPacket("minecraft:register", channels.getBytes(StandardCharsets.UTF_8)));
                         }
@@ -485,11 +486,23 @@ public class GeyserUtils implements Extension {
 
     private void announceEntityQueries(GeyserSession session) {
         session.ensureInEventLoop(() -> session.sendDownstreamPacket(ReflectionUtils.buildServerboundPayloadPacket(
-                "minecraft:register", (GeyserUtilsChannels.MAIN + "\0" + GeyserUtilsChannels.ENTITY_IDS_CAPABILITY)
+                "minecraft:register", (GeyserUtilsChannels.MAIN + "\0" + GeyserUtilsChannels.ENTITY_IDS_CAPABILITY + "\0" + GeyserUtilsChannels.SERVER_BREAK_CAPABILITY)
                         .getBytes(StandardCharsets.UTF_8))));
     }
 
     private void handleCustomPacket(GeyserSession session, CustomPayloadPacket customPacket) {
+        if (customPacket instanceof me.zimzaza4.geyserutils.common.packet.ServerBreakStatePacket state) {
+            if (state.getVersion() != 1) return;
+            session.ensureInEventLoop(() -> session.getBlockBreakHandler().updateServerBreak(
+                    state.getGeneration(), state.getClaim(), state.getRevision(),
+                    org.cloudburstmc.math.vector.Vector3i.from(state.getX(), state.getY(), state.getZ()),
+                    state.getProgress(), state.getProgressPerTick(), state.getStatus()));
+            return;
+        }
+        if (customPacket instanceof me.zimzaza4.geyserutils.common.packet.ServerBreakTracePacket trace) {
+            session.ensureInEventLoop(() -> session.getBlockBreakHandler().startServerBreakTrace(trace.getSeconds(), trace.getTraceId()));
+            return;
+        }
         if (customPacket instanceof EntityIdsRequestPacket request) {
             EntityIdsQueryHandler.handle(session, request, response ->
                     session.sendDownstreamPacket(ReflectionUtils.buildServerboundPayloadPacket(
