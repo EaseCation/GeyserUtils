@@ -24,15 +24,15 @@ repositories {
 
 dependencies {
     // EaseCation (NetEase) Geyser fork from Yunxiao; the workspace substitutes it with the local project.
-    compileOnly("net.easecation.fork.geysermc.geyser:core:2.9.2-ec.2")
-    compileOnly("net.easecation.fork.geysermc.geyser:api:2.9.2-ec.2")
+    compileOnly("net.easecation.fork.geysermc.geyser:core:2.9.2-ec.3")
+    compileOnly("net.easecation.fork.geysermc.geyser:api:2.9.2-ec.3")
 
     compileOnly("org.projectlombok:lombok:1.18.32")
     annotationProcessor("org.projectlombok:lombok:1.18.32")
 
     implementation(project(":geyserutils-common"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
-    testImplementation("net.easecation.fork.geysermc.geyser:core:2.9.2-ec.2")
+    testImplementation("net.easecation.fork.geysermc.geyser:core:2.9.2-ec.3")
     testImplementation("org.mockito:mockito-core:5.15.2")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.4")
 }

@@ -6,12 +6,14 @@ plugins {
 // coordinates/versioning per GeyserWorkspace docs/maven-coordinates.md.
 subprojects {
     group = "net.easecation.fork.zimzaza4"
-    version = "1.0-ec.1"
+    version = "1.0-SNAPSHOT"
 
     apply(plugin = "maven-publish")
     plugins.withId("java") {
         extensions.configure<PublishingExtension> {
             publications.create<MavenPublication>("maven") {
+                // Runtime version stays 1.0-SNAPSHOT as on the servers; the EaseCation repository gets this release.
+                version = "1.0-ec.2"
                 from(components["java"])
                 pom {
                     description.set("EaseCation fork of GeyserExtensionists GeyserUtils")
@@ -24,12 +26,8 @@ subprojects {
                 // Credentials: yunxiaoMavenUsername / yunxiaoMavenPassword in ~/.gradle/gradle.properties.
                 maven {
                     name = "yunxiaoMaven"
-                    url = uri(
-                        if (version.toString().endsWith("-SNAPSHOT"))
-                            "https://easecation-cn-hangzhou.devops.aliyuncs.com/packages/api/protocol/maven/14075-snapshot-bjmmxv"
-                        else
-                            "https://easecation-cn-hangzhou.devops.aliyuncs.com/packages/api/protocol/maven/14075-release-h64s7e"
-                    )
+                    // Publications are always releases (see version above).
+                    url = uri("https://easecation-cn-hangzhou.devops.aliyuncs.com/packages/api/protocol/maven/14075-release-h64s7e")
                     credentials(PasswordCredentials::class)
                 }
             }
